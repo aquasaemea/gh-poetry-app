@@ -1,0 +1,67 @@
+name: GH POETRY APP
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches: 
+      - master
+      # comment10
+      
+env:
+   DOCKER_REPOSITORY: aquasaemea # name of Docker Hub ID
+   IMAGE_NAME: gh-poetry-app
+   IMAGE_TAG: ${{ github.run_number }} # $GITHUB_RUN_NUMBER
+
+jobs:
+  CI-Code:
+    runs-on: ubuntu-22.04
+    steps:
+    
+      - name: Checkout code
+        uses: actions/checkout@v2
+          
+      - name: Aqua code scanning(SCA, Sensitive data, IaC, SAST, pipeline file, initial SBOM)
+        uses: docker://aquasec/aqua-scanner
+        with:
+          args: trivy fs --scanners misconfig,vuln,secret --sast --reachability --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL .
+          # --format template --template "@Report-Templates/aqua.tpl" -o .github/workflows/code_scan_results.html
+          # To customize which severities to scan for, add the following flag: --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          # To enable SAST scanning, add: --sast
+          # To enable npm/dotnet non-lock file scanning, add: --package-json / --dotnet-proj
+        env:
+          AQUA_KEY: ${{ secrets.AQUA_KEY }}
+          AQUA_SECRET: ${{ secrets.AQUA_SECRET }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TRIVY_RUN_AS_PLUGIN: 'aqua'
+
+         
+  CI-Build:
+    needs: CI-Code
+    runs-on: ubuntu-22.04
+    steps:   
+    
+      - name: Checkout code
+        uses: actions/checkout@v2
+     
+      - name: SBOM Generation
+        run: |
+          export BILLY_SERVER=https://billy.codesec.aquasec.com
+          curl -sLo install.sh download.codesec.aquasec.com/billy/install.sh
+          curl -sLo install.sh.checksum https://github.com/argonsecurity/releases/releases/latest/download/install.sh.checksum
+          if ! cat install.sh.checksum | sha256sum ; then
+          echo "install.sh checksum failed"
+          exit 1
+          fi
+          BINDIR="." sh install.sh
+          rm install.sh install.sh.checksum
+          ./billy generate \
+            --access-token "${{ github.token }}" \
+            --aqua-key "${{ secrets.AQUA_KEY }}" \
+            --aqua-secret "${{ secrets.AQUA_SECRET }}" \
+            --artifact-path requirements.txt
+
+            # The docker image name:tag of the newly built image
+            # --artifact-path "my-image-name:${{ env.tag-version }}" 
+            # OR the path to the root folder of your project. I.e my-repo/my-app 
+            ## --artifact-path "${{env.MY_APP_ROOT}}"
